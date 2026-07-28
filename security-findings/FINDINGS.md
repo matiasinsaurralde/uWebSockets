@@ -183,6 +183,17 @@ default build or any shipping app.
   shared inflate buffers) — returned views consumed synchronously before reuse; no cross-connection
   leak. (leak agent + root)
 
+## End-to-end demonstration
+
+`demo/` contains a runnable end-to-end request-smuggling demo against a **real uWebSockets
+back-end** (compiled from `demo/backend_uws.cpp`): a vulnerable connection-pooling reverse
+proxy, an attacker client, and a victim client. Running `demo/run.sh` shows the victim's
+`GET /account` request (with `Cookie: victim-secret-cookie`) being answered by the attacker's
+smuggled `GET /steal` request, with the victim's request-line and session cookie captured
+into it — and `demo/mitigation.go` shows a strict front-end (Go `net/http`) rejecting all
+three malformed payloads (`invalid byte in chunk length`, `malformed MIME header line`,
+`multiple Content-Length headers`), confirming the fix/mitigation directions.
+
 ## Methodology
 
 Root-coordinated multi-agent search (≤4 concurrent), grouped by approach family: HTTP parsing,
