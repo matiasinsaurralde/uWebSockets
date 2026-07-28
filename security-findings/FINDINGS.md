@@ -183,16 +183,51 @@ default build or any shipping app.
   shared inflate buffers) — returned views consumed synchronously before reuse; no cross-connection
   leak. (leak agent + root)
 
-## End-to-end demonstration
+## End-to-end demonstration (runnable)
 
-`demo/` contains a runnable end-to-end request-smuggling demo against a **real uWebSockets
-back-end** (compiled from `demo/backend_uws.cpp`): a vulnerable connection-pooling reverse
-proxy, an attacker client, and a victim client. Running `demo/run.sh` shows the victim's
-`GET /account` request (with `Cookie: victim-secret-cookie`) being answered by the attacker's
-smuggled `GET /steal` request, with the victim's request-line and session cookie captured
-into it — and `demo/mitigation.go` shows a strict front-end (Go `net/http`) rejecting all
-three malformed payloads (`invalid byte in chunk length`, `malformed MIME header line`,
-`multiple Content-Length headers`), confirming the fix/mitigation directions.
+`demo/` contains runnable PoCs against a **real, unmodified uWebSockets back-end** compiled from
+this repo's `src/` (`demo/backend_uws.cpp` — a catch-all route that logs and echoes the
+`method / url / cookie / x-smuggled` of every request it parses, so cross-user leakage is directly
+observable). Two forms:
+
+- **`demo/networked/`** — fully networked: a real reverse proxy with its own TCP listener
+  (`vuln_proxy.go`, `:8080`) that pools ONE back-end connection and forwards bytes verbatim, an
+  `attacker.go`, a `victim.go`, and a mitigating `strict_proxy.go` (`:8081`). Run
+  `demo/networked/run_networked.sh` (or `… a|b|c|mitigate`).
+- **`demo/run.sh`** — the same exploit with the proxy modeled in-process (for environments that
+  block a second listener).
+
+### Observed results (real uWebSockets back-end)
+
+| Scenario | Attacker request (key part) | uWS behavior | Victim outcome |
+|----------|-----------------------------|--------------|----------------|
+| **A** empty header name | `Host: t` / `:` / `Content-Length: 33` then a 33-byte smuggled prefix | `:` hides the CL → body length 0 → re-parses the "body" as the next request | Served the attacker's **`/steal`**; back-end parses `url=/steal cookie="victim-secret-cookie" x-smuggled="GET /account HTTP/1.1"` — **cookie + request-line captured** |
+| **B** duplicate Content-Length | `Content-Length: 6` + `Content-Length: 39`, body `HELLO!` + smuggled prefix | uWS uses first (6); leftover 33 bytes become the next request | Identical to A — **cookie captured** |
+| **C** F1 chunked `g`=16 | `Transfer-Encoding: chunked`, size line `1g` | uWS **over-reads** (`1g`=32), consumes past the terminator, returns `505` + `Connection: close` | Pooled connection **poisoned/closed** → victim **DENIED (DoS)** |
+
+A and B are clean cross-user credential theft. C is the request-smuggling-class **denial of
+service**: because F1 makes uWS over-read (rather than under-read), it poisons the shared
+connection instead of cleanly stealing — the honest, weaker outcome for that particular bug. The
+`g`=16 parser deviation itself is proven deterministically by `demo/poc`-adjacent
+`poc/verify_f1_chunked_smuggling.cpp`.
+
+### Mitigation (same PoC)
+
+`strict_proxy.go` / `mitigation.go` send the identical payloads through a strict parser (Go
+`net/http`), which **rejects all three** before they reach the back-end:
+
+```
+A empty header name        -> 400  (malformed MIME header line)
+B duplicate Content-Length -> 400  (multiple Content-Length headers)
+C chunked 'g'=16           -> 400 / re-normalized (invalid byte in chunk length)
+victim (legitimate)        -> 200  url=/account   (clean; no /steal ever reaches the back-end)
+```
+
+That Go rejects `g` as `invalid byte in chunk length` is exactly the behavior uWebSockets *should*
+have (the `> 16` → `> 15` fix), confirming F1 is the deviation.
+
+See `demo/README.md` and `demo/networked/README.md` for topology, per-scenario byte-level
+walkthroughs, and step-by-step instructions.
 
 ## Methodology
 

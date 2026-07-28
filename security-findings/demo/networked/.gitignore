@@ -1,0 +1,11 @@
+# build artifacts
+backend
+vuln_proxy
+strict_proxy
+attacker
+victim
+*.log
+*.o
+.bpid
+.ppid
+.spid

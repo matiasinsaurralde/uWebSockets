@@ -1,67 +1,56 @@
-# End-to-end HTTP request-smuggling demo (real uWebSockets back-end)
+# Request-smuggling PoCs against a real uWebSockets back-end
 
-This demonstrates, with running code, that the HTTP-parsing deviations documented in
-`../FINDINGS.md` produce a **real cross-user request smuggle** when uWebSockets sits
-behind a connection-pooling reverse proxy — and that a **strict front-end mitigates it**.
+This directory contains runnable, end-to-end proofs of concept for the HTTP request-smuggling
+class documented in [`../FINDINGS.md`](../FINDINGS.md). Everything runs against a **real,
+unmodified uWebSockets server** compiled from this repo's `src/` (`backend_uws.cpp`).
 
-## Run it
+## What's here
 
-```
-./run.sh
-```
+| Path | What it is | When to use |
+|------|-----------|-------------|
+| [`networked/`](networked/) | **Full TCP** PoC: real reverse proxy with its own listener, two client processes, three attack scenarios (A/B/C) + a strict-proxy mitigation. | The main PoC — run this. |
+| `demo.go`, `mitigation.go`, `probe.go`, `run.sh` | **In-process** version of the same exploit (proxy modeled as an in-process forwarder). Kept because it runs even where a second TCP listener is blocked. | Constrained environments. |
+| [`../poc/`](../poc/) | **Parser-level** PoCs that drive the real headers directly and prove the two surgical plants (`verify_f1_chunked_smuggling.cpp`, `verify_f3_ws_frame_injection.cpp`). | Prove the bugs themselves. |
 
-(Requires `g++` C++17, `go`, and the `uSockets` submodule checked out. It builds a real
-uWebSockets server and drives it over TCP.)
+## Quick start (full TCP PoC)
 
-## The four actors
-
-| Actor | What it is |
-|-------|-----------|
-| **uWebSockets back-end** | `backend_uws.cpp` — a real uWS HTTP server (catch-all route) that reports the method / URL / `Cookie` / `X-Smuggled` header of every request it **parses**. |
-| **Vulnerable proxy** | in `demo.go` — reuses **one** pooled back-end connection across all clients and forwards each client request **verbatim** after framing it by `Content-Length` (models a lenient CDN/LB; the front-end↔proxy hop is in-process only because this sandbox blocks a second listener — the proxy↔back-end path is real TCP). |
-| **Attacker** | sends one crafted request. |
-| **Victim** | sends one normal request moments later, over the same pooled connection. |
-
-## What the exploit does
-
-The attacker's single request contains an **empty header name** (`:` on its own line).
-uWebSockets' `getHeader` treats the empty key as the end-of-headers sentinel, so it never
-sees the following `Content-Length` and concludes the request is **body-less**. The proxy,
-however, does see the `Content-Length` and forwards the declared "body" — which is actually
-a **smuggled request prefix** (`GET /steal … X-Smuggled: `, ending mid-header). uWS parses
-that prefix as the start of the *next* request and waits.
-
-When the victim's `GET /account` (with `Cookie: victim-secret-cookie`) arrives on the same
-pooled connection, uWS **appends** it to the buffered prefix, completing:
-
-```
-GET /steal HTTP/1.1
-X-Smuggled: GET /account HTTP/1.1      <- victim's request-line captured
-Host: t
-Cookie: victim-secret-cookie           <- victim's session captured
+```bash
+cd networked
+./run_networked.sh          # all 3 scenarios + mitigation
+./run_networked.sh a        # scenario A only … (a|b|c|mitigate)
 ```
 
-**Observed result:** the victim receives the response for `/steal`, and the back-end log
-shows it parsed `url=/steal cookie="victim-secret-cookie" x-smuggled="GET /account HTTP/1.1"`.
-The victim's credentials were smuggled into an attacker-controlled request.
+See [`networked/README.md`](networked/README.md) for the topology, per-scenario byte-level
+walkthroughs, expected output, and manual `nc` recipes.
 
-The same effect is reproducible with the duplicate-`Content-Length` and (via a chunk-size
-disagreement) the F1 chunked-`g` deviations; see `probe.go` for a raw two-burst probe
-straight at the back-end.
+## The three scenarios at a glance
 
-## The mitigation
+| Scenario | Deviation | uWS reads | Outcome (victim) |
+|----------|-----------|-----------|------------------|
+| **A** | empty header name `:` hides `Content-Length` | body = 0 | served the attacker's `/steal`, **cookie captured** |
+| **B** | duplicate `Content-Length` (uWS uses first=6) | 6 body bytes | served the attacker's `/steal`, **cookie captured** |
+| **C** | F1 chunked `g`=16 (`ChunkedEncoding.h:57`) | **over-reads** the chunk | desync → `505` + pooled-conn poisoning → **DoS/denied** |
 
-`mitigation.go` feeds the identical payloads to a **strict** parser (Go `net/http`,
-representative of a compliant proxy). It **rejects all of them**:
+A and B are clean cross-user theft; C is the request-smuggling-class denial of service (F1
+over-reads, so it poisons the shared connection rather than cleanly stealing — the honest outcome
+for that bug; the `g`=16 deviation itself is proven directly in `../poc/verify_f1_chunked_smuggling.cpp`).
 
+## In-process version
+
+```bash
+./run.sh    # builds backend + demo.go + mitigation.go, runs the exploit and the mitigation
 ```
-F1 chunked 'g'=16        -> REJECTED: invalid byte in chunk length
-empty header name ':'    -> REJECTED: malformed MIME header line
-duplicate Content-Length -> REJECTED: multiple Content-Length headers
-normal request           -> accepted
-```
 
-So the attack is closed either by making **uWebSockets** parse strictly (reject these
-inputs itself — the proper fix for the planted bugs) **or** by a **strict front-end** that
-rejects/normalizes ambiguous requests before forwarding. Not pooling the back-end
-connection across users removes the cross-user step entirely. Defense on both ends is best.
+## What "the back-end reports" means
+
+`backend_uws.cpp` runs a catch-all uWS route that, for **every request it parses**, logs and
+echoes `method / url / cookie / x-smuggled`. So when the victim receives
+`... url=/steal cookie="victim-secret-cookie" x-smuggled="GET /account HTTP/1.1"`, that is the
+real uWebSockets server telling you it parsed the attacker's smuggled request with the victim's
+credentials folded in.
+
+## Mitigation, in one line
+
+A strict front-end (here Go `net/http`) rejects A and B with `400` and re-normalizes C, so no
+parser disagreement reaches the back-end — the proper fixes are (1) make uWebSockets parse
+strictly (reject these inputs), and/or (2) don't pool back-end connections across users.
