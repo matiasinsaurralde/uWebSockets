@@ -19,17 +19,20 @@ per-target `CAUSAL-ATTRIBUTION.md` files.
 
 | Target | Runs the uWS parser via | **A** empty header name | **B** duplicate `Content-Length` | **C** chunked `g`=16 | Net exposure |
 |---|---|:--:|:--:|:--:|---|
-| **uWebSockets** (this repo `src/`) | native C++ server | 🔴 **theft** | 🔴 **theft** | 🟠 desync/DoS (over-read) | A + B + C |
-| **uWebSockets.js** v20.69.0 | prebuilt Node addon, uWS core `fe7c01a` | 🔴 **theft** | 🔴 **theft** | 🟠 desync/DoS (over-read) | A + B + C |
-| **hyper-express** 7.0.2 | → uWebSockets.js v20.69.0 | 🔴 **theft** | 🔴 **theft** | 🟠 desync/DoS (over-read) | A + B + C |
+| **uWebSockets** (this repo `src/`) | native C++ server | 🔴 **theft** | 🔴 **theft** | 🟠 desync (over-read) | A + B + C |
+| **uWebSockets.js** v20.69.0 | prebuilt Node addon, uWS core `fe7c01a` | 🔴 **theft** | 🔴 **theft** | 🟠 desync (over-read) | A + B + C |
+| **hyper-express** 7.0.2 | → uWebSockets.js v20.69.0 | 🔴 **theft** | 🔴 **theft** | 🟠 desync (over-read) | A + B + C |
 | **Bun** 1.3.14 | **vendored uWS *fork*** (`packages/bun-uws`) | 🔴 **theft** | 🟢 `400` (hardened) | 🟢 `400` (hardened) | **A only** |
 
 - 🔴 **theft** = clean cross-user request smuggling: the victim's normal `GET /account` (carrying
   `Cookie: victim-secret-cookie`) is served the attacker's smuggled `/steal`, and the victim's own
   cookie is folded into it. Directly observed in each PoC's backend log.
-- 🟠 **desync/DoS (over-read)** = uWS *accepts* the `g`=16 chunk size (F1) and **over-reads** the
-  chunk, corrupting the pooled connection; the victim gets `505` + close. A DoS, not clean theft,
-  because the over-read consumes past a clean request boundary.
+- 🟠 **connection desync (over-read)** = uWS *accepts* the `g`=16 chunk size (F1) and **over-reads**
+  the chunk *within the buffered stream*, corrupting the framing on **that one connection**; the
+  victim sharing it gets `505` + close. **Validated (see §Validated impact of C):** the server
+  process does **not** crash and stays fully available to every other connection — the denial of
+  service is *scoped to the users on the poisoned pooled connection*, **not** a server-wide outage,
+  and it is **not** a memory-safety / out-of-bounds read.
 - 🟢 **hardened** = the deviation is **not live**: Bun's fork rejects the input with `400`. (Through a
   *pooling* proxy the `400`+close still poisons the shared connection → a victim-side DoS, but that
   is a front-end pooling artifact, **not** the uWS parser bug being exploitable.)
@@ -38,6 +41,35 @@ per-target `CAUSAL-ATTRIBUTION.md` files.
 live in **all four** targets, including Bun. B and C are live wherever the uWS core is shipped
 unmodified (the fork, uWebSockets.js, hyper-express) and only closed where a downstream patched the
 parser itself (Bun).
+
+### Validated impact of C — no crash, no server-wide DoS (scoped connection desync)
+
+The `g`=16 (F1) outcome is often loosely called "DoS." To be precise, it was **validated directly**
+(2026-07-28): the case-C payload — and an aggressive over-read variant that declares a 32-byte chunk
+but sends 4 bytes then closes — were sent straight at each server, and process liveness + server-wide
+availability were checked immediately after.
+
+| Target | direct case-C | over-read (declare 32, send 4, EOF) | fresh requests served **after** the attack | process |
+|---|---|---|---|---|
+| uWS core | `505` | connection aborted (no response) | **8 / 8** | **ALIVE** |
+| uWebSockets.js | `200` | `200` | **8 / 8** | **ALIVE** |
+| hyper-express | `200` | connection aborted (no response) | **8 / 8** | **ALIVE** |
+
+**Findings:**
+- **The process does not crash** on any target — all three stayed alive through both the case-C
+  attack and the aggressive over-read+EOF probe.
+- **No server-wide denial of service** — every server kept serving fresh connections normally (8/8)
+  immediately after the attack.
+- **Not a memory-safety bug.** The "over-read" is *logical stream mis-framing bounded by uSockets'
+  padded recv buffer*, not an out-of-bounds memory read. When the declared chunk bytes aren't
+  present, the streaming parser waits for more data or **aborts cleanly on EOF** (the over-read
+  probe closes the connection with no crash).
+- **The real, scoped impact:** C corrupts request framing on **the single connection** carrying the
+  malformed chunk. Behind a *pooling* front-end that reuses one back-end connection across users,
+  that poisoned connection returns `505`/close (or a mis-matched response) to the co-tenant victim(s)
+  multiplexed onto it — a request-smuggling-class **denial / response-mismatch against pooled
+  co-tenants**, not a crash and not a whole-server outage. (Severity still matters: it breaks request
+  integrity and can deny the affected users; it simply isn't a process-kill.)
 
 ---
 

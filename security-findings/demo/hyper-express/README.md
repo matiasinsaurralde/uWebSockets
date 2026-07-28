@@ -285,6 +285,14 @@ weaponization requires a front-end that forwards the malformed chunk verbatim.
 > (`number > 15`) would `400`/close on the `1g` size line and the victim would instead get an
 > **empty** DoS. `victim.go` labels this `desynced/other` (its `*** DENIED (DoS) ***` branch only
 > fires on a completely empty response). Either way the pooled connection is destroyed for the victim.
+>
+> **Validated — no crash, no server-wide DoS.** Case C (and an aggressive over-read that declares a
+> 32-byte chunk but sends 4 bytes then closes) sent straight at this hyper-express server does **not**
+> crash it — it stays alive and serves fresh connections **8/8** immediately after (the over-read+EOF
+> variant aborts the connection cleanly, no segfault). The over-read is *logical* stream mis-framing
+> bounded by uSockets' padded recv buffer, not an out-of-bounds read. The DoS is *scoped to co-tenants
+> on the poisoned pooled connection*, not a whole-server outage. Full evidence:
+> [`../../ECOSYSTEM-IMPACT.md`](../../ECOSYSTEM-IMPACT.md) § "Validated impact of C".
 
 ### Direct proof the shipping addon accepts `g`=16
 

@@ -35,6 +35,15 @@ A and B are clean cross-user theft; C is the request-smuggling-class denial of s
 over-reads, so it poisons the shared connection rather than cleanly stealing — the honest outcome
 for that bug; the `g`=16 deviation itself is proven directly in `../poc/verify_f1_chunked_smuggling.cpp`).
 
+> **Validated scope of C's "DoS":** it is a **connection-level desync, not a server crash or a
+> server-wide outage.** Sending case C (and an aggressive over-read that declares a 32-byte chunk but
+> sends only 4 bytes then closes) straight at the uWS core / uWebSockets.js / hyper-express servers
+> leaves every process **alive and serving fresh connections 8/8** immediately after. The over-read
+> is a *logical* stream mis-framing bounded by uSockets' padded recv buffer (not an out-of-bounds
+> read); on short data uWS waits or aborts cleanly on EOF. The denial is *scoped to co-tenants sharing
+> the poisoned pooled connection*. See [`../ECOSYSTEM-IMPACT.md`](../ECOSYSTEM-IMPACT.md)
+> § "Validated impact of C".
+
 ## In-process version
 
 ```bash

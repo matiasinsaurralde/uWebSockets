@@ -243,6 +243,14 @@ Connection: close
 > `*** DENIED (DoS) ***` branch only fires on a *completely empty* response). Either way the pooled
 > connection is destroyed for the victim — a request-smuggling-class denial of service.
 >
+> **Validated — no crash, no server-wide DoS.** Case C (and an aggressive over-read that declares a
+> 32-byte chunk but sends 4 bytes then closes) sent straight at this uWS.js server does **not** crash
+> it — it stays alive and serves fresh connections **8/8** immediately after. The over-read is a
+> *logical* stream mis-framing bounded by uSockets' padded recv buffer (not an out-of-bounds read);
+> on short data it waits or **aborts cleanly on EOF**. The DoS is *scoped to co-tenants on the
+> poisoned pooled connection*. Full evidence: [`../../ECOSYSTEM-IMPACT.md`](../../ECOSYSTEM-IMPACT.md)
+> § "Validated impact of C".
+>
 > **Direct confirmation that F1 is in this shipped binary.** A separate one-shot probe sent this
 > exact library a single chunked request whose size line is the non-hex byte `g` followed by 16
 > payload bytes, using a body-reading handler. uWebSockets.js v20.69.0 answered
