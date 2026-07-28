@@ -80,3 +80,14 @@ SUMMARY:  A=safe/rejected   B=safe/rejected   C=safe/hardened
 That contrast is the whole point: the parser deviations are real, but a compliant L7 proxy closes
 them — the risk is deployments that pool connections **without** normalizing. See
 [`../ECOSYSTEM-IMPACT.md`](../ECOSYSTEM-IMPACT.md) for the full analysis.
+
+## Companion scripts in this directory
+
+| Script | What it does |
+|--------|--------------|
+| `smuggle_probe.go` | the probe above — given a URL, reports A/B/C |
+| `validate_c_impact.py` | proves scenario **C** is a scoped connection desync, **not** a crash or server-wide DoS (case-C payload + aggressive over-read + post-attack liveness). `python3 validate_c_impact.py [host] [port]` |
+| `nginx_mitigation_test.sh` | runs **real nginx** (with back-end pooling on) in front of the uWS back-end and drives A/B/C through it — shows a compliant L7 proxy blocks all three. `./nginx_mitigation_test.sh` |
+
+The methodology, full results, and the disclosure/severity reasoning are written up in detail in
+[`../TESTING-AND-ANALYSIS.md`](../TESTING-AND-ANALYSIS.md).
