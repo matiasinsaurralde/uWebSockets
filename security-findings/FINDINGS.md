@@ -15,8 +15,19 @@
 > (partially — Bun ships a uWS *fork* that hardened F1 and duplicate-`Content-Length`, but still
 > has the empty-header-name smuggle live) — see
 > [`ECOSYSTEM-IMPACT.md`](ECOSYSTEM-IMPACT.md) and the per-target PoCs under `demo/`. Read
-> "plant"/"planted" below as "upstream bug." The upstream maintainer already saw this
-> smuggling class (issue #1898) and closed it as "invalid" (their stance: it is the front-end's job).
+> "plant"/"planted" below as "upstream bug."
+>
+> A *related* upstream report exists — issue **#1898**, "Server Fails to Properly Handle Extra Data
+> Beyond Content-Length" — closed as `invalid`. But it describes a **single-client** scenario (a
+> client leaving extra bytes on its *own* connection), which is weaker than and **distinct from** the
+> **cross-client** smuggle demonstrated here (attacker→victim cookie theft via a *pooled* back-end
+> connection). I could **not** retrieve a written maintainer rationale for the `invalid` label, so no
+> specific maintainer stance is quoted (an earlier draft's "it's the front-end's job" paraphrase was
+> unsubstantiated and has been removed). Separately **validated**: a compliant L7 proxy (nginx 1.24,
+> and by design envoy) **rejects all three deviations** and closes the cross-client leak — real-world
+> exposure is against **lenient / L4 front-ends** (TCP load balancers, non-normalizing gateways) that
+> pool connections across users. Use [`tools/smuggle_probe.go`](tools/smuggle_probe.go) to test a
+> given deployment.
 
 ## Executive summary
 

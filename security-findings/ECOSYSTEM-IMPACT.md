@@ -182,7 +182,12 @@ demonstrates two things at once:
      `ChunkedEncoding.h:98-102` is a working reference; also validate chunk/trailer terminators.
 2. **Deploy a strict, re-serializing front-end.** A compliant reverse proxy (the PoCs use Go
    `net/http`) rejects A and B with `400` and re-normalizes C before the back-end ever sees the
-   disagreement. Demonstrated by every PoC's `strict_proxy`.
+   disagreement. Demonstrated by every PoC's `strict_proxy`, and **validated with real nginx 1.24**:
+   with `upstream keepalive` (back-end pooling explicitly *on*), all three attacks return `400` at
+   the edge and `/steal` never reaches uWS. So a compliant **L7** proxy (nginx; envoy by design)
+   closes the whole class. The residual exposure is **L4/TCP load balancers** (AWS NLB, HAProxy
+   `mode tcp`, many k8s `LoadBalancer` services) and **non-normalizing gateways**, which pool
+   connections across users *without* re-serializing.
 3. **Do not pool back-end connections across users.** Removes the cross-user channel that turns a
    parser disagreement into cross-user theft (and turns C's over-read/rejection into a shared-pool
    DoS).
@@ -210,3 +215,13 @@ cd bun               && ./run.sh                      # A theft; B/C hardened ->
 
 Parser-level proofs of the deviations themselves are in [`poc/`](./poc/). Per-runtime source
 attribution is in each PoC dir's `CAUSAL-ATTRIBUTION.md`.
+
+**Test any deployment yourself** with the single-file probe in [`tools/`](./tools/):
+
+```bash
+go run tools/smuggle_probe.go http://127.0.0.1:9001/   # your back-end directly  -> expect VULNERABLE
+go run tools/smuggle_probe.go http://127.0.0.1:8080/   # your proxy's front door -> compliant L7 = safe
+```
+
+It reports A/B/C as `VULNERABLE` / `safe` for any HTTP/1.1 URL (exit 1 if any case is vulnerable).
+Run it against the back-end *and* the front door and compare — that difference is the whole point.
