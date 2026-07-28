@@ -1,5 +1,21 @@
 # uWebSockets — Zero-Day Vulnerability Hunt: Findings
 
+> ## ⚠️ IMPORTANT CORRECTION (provenance) — added after ecosystem validation
+>
+> Ecosystem testing prompted a direct diff of this repo's `src/` against **upstream
+> uNetworking/uWebSockets at `fe7c01a`** (the commit this fork is based on, and the one
+> uWebSockets.js v20.69.0 ships). **The two are byte-identical** (`diff -rq` is empty, including
+> `ChunkedEncoding.h:57` `number > 16` and `WebSocketProtocol.h:361` `getOpCode(src) < 2`).
+>
+> **Therefore these are NOT "planted" fork-specific bugs — they are real, shipping upstream
+> uWebSockets code.** My original "surgical one-token plant" framing below was an *unverified
+> inference* (during discovery I deliberately did not diff against upstream, per the ground rules);
+> the diff disproves it. The findings are genuine upstream uWebSockets bugs, which is why they
+> reproduce in **uWebSockets.js, Bun, and hyper-express** — see
+> [`ECOSYSTEM-IMPACT.md`](ECOSYSTEM-IMPACT.md) and the per-target PoCs under `demo/`. Read
+> "plant"/"planted" below as "upstream bug." The upstream maintainer already saw this
+> smuggling class (issue #1898) and closed it as "invalid" (their stance: it is the front-end's job).
+
 ## Executive summary
 
 A first-principles source audit (no changelog/git-diff/patched-version comparison), driven by
