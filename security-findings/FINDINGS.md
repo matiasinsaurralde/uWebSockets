@@ -11,7 +11,9 @@
 > uWebSockets code.** My original "surgical one-token plant" framing below was an *unverified
 > inference* (during discovery I deliberately did not diff against upstream, per the ground rules);
 > the diff disproves it. The findings are genuine upstream uWebSockets bugs, which is why they
-> reproduce in **uWebSockets.js, Bun, and hyper-express** — see
+> reproduce in **uWebSockets.js and hyper-express** (fully — same `fe7c01a` core) and in **Bun**
+> (partially — Bun ships a uWS *fork* that hardened F1 and duplicate-`Content-Length`, but still
+> has the empty-header-name smuggle live) — see
 > [`ECOSYSTEM-IMPACT.md`](ECOSYSTEM-IMPACT.md) and the per-target PoCs under `demo/`. Read
 > "plant"/"planted" below as "upstream bug." The upstream maintainer already saw this
 > smuggling class (issue #1898) and closed it as "invalid" (their stance: it is the front-end's job).

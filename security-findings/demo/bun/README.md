@@ -2,22 +2,32 @@
 
 End-to-end validation of the uWebSockets HTTP request-smuggling class against **Bun 1.3.14**.
 
-Bun's `Bun.serve` HTTP server runs **uWebSockets' C++ `HttpParser`** under the hood (Bun vendors
-uWebSockets in `packages/bun-uws` and `Bun.serve` calls `uWS::App::create`), so it inherits
-upstream uWebSockets' HTTP-parsing behavior. This repo's `src/` was verified **byte-identical** to
-upstream uWebSockets `fe7c01a`, so the bugs here are real upstream uWebSockets bugs, not a fork.
+Bun's `Bun.serve` HTTP server runs **uWebSockets' C++ `HttpParser`** under the hood: Bun vendors a
+**fork** of uWebSockets in `packages/bun-uws/`, and every server request is parsed by it (verified
+from source: `server.zig:539` → `uws_create_app` → `HttpContext::onData` → `HttpParser::getHeaders`;
+Bun's `picohttp` parser is used only by the `fetch` *client*, never by `Bun.serve`). Because Bun's
+vendored uWS is a **modified** fork, it does **not** inherit upstream's behavior uniformly:
+
+- **Scenario A's** empty-header-name / empty-key sentinel is shipped **unchanged** from upstream
+  uWebSockets `fe7c01a` (this repo's `src/` is byte-identical to `fe7c01a`), so **A reproduces** —
+  the confirmed cross-user smuggle is caused by the upstream uWebSockets parser code path.
+- **Scenarios B and C are actively hardened in Bun's fork** and do **not** smuggle (details below).
+
+See [`CAUSAL-ATTRIBUTION.md`](./CAUSAL-ATTRIBUTION.md) for the exact vendored-source line citations.
 
 ## Result summary (Bun 1.3.14, reproduced here)
 
 | Scenario | Result | Detail |
 |----------|--------|--------|
-| **A** empty header name hides `Content-Length` | ✅ **SMUGGLED** | victim served the attacker's `/steal`, `cookie=victim-secret-cookie` captured |
-| **B** duplicate `Content-Length` | ❌ **rejected** (`400`) | Bun 1.3.14 *does* reject duplicate CL — partial hardening |
-| **C** chunked `g`=16 | ⚠️ **desync/DoS** | attacker `200 /echo`, victim `400` + connection closed |
+| **A** empty header name hides `Content-Length` | ✅ **SMUGGLED** (uWS code path, live) | victim served the attacker's `/steal`, `cookie=victim-secret-cookie` captured — uWS sentinel bug, unchanged from `fe7c01a` |
+| **B** duplicate `Content-Length` | ❌ **rejected** (`400`) — **Bun-hardened** | Bun's fork added an all-headers dup-CL scan that rejects differing values (not in upstream); end-to-end the `400`+close poisons the pooled conn → victim DoS |
+| **C** chunked `g`=16 | ❌ **rejected** (`400`) — **Bun-hardened** | Bun's fork fixed the `>16` off-by-one, so `g`/`G` → `400`. The attacker's `200 /echo` is the handler replying on headers *before* the body; Bun then rejects the `g` chunk → pool poisoned → victim `400`/close (desync/DoS, **not** an F1 over-read) |
 
-> Note: Bun's **latest master** (`d549845`) further hardens its vendored uWS parser — it also rejects
-> empty header names and `g` chunk sizes — so scenario A is expected to be fixed in newer Bun. As of
-> 1.3.14, A reproduces.
+> Note: only **scenario A** is live in Bun 1.3.14 (build `0d9b296`). B and C are already hardened in
+> Bun's vendored uWS fork as of 1.3.14 — a body-reading differential probe straight at `Bun.serve`
+> shows dup-CL(differing) → `400` and `g`/`G` chunk sizes → `400` (while valid `10` → `200`, 16-byte
+> body delivered). Bun's **later master** additionally rejects the empty header name, which is
+> expected to close scenario A in a newer release. As of 1.3.14, A reproduces end-to-end.
 
 ## Prerequisites
 
