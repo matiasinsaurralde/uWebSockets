@@ -19,7 +19,6 @@ node_modules/
 bun.lockb
 package-lock.json
 
-# ---- ecosystem PoC dirs still being built by agents; un-ignored + committed
-#      (source only) once verified. See git history for the finalized versions.
-/uwebsockets-js/
-/hyper-express/
+# ---- ecosystem PoC dirs (uwebsockets-js/, hyper-express/, bun/): verified,
+#      finalized, source-only tracked. node_modules, Go binaries, *.log, *.pid and
+#      package-lock.json stay ignored by the rules above plus each dir's .gitignore.

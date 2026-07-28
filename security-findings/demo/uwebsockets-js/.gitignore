@@ -1,0 +1,12 @@
+# Node install (pulled by `npm install` from the v20.69.0 tag)
+node_modules/
+package-lock.json
+
+# Go binaries (built by run.sh)
+vuln_proxy
+strict_proxy
+attacker
+victim
+
+# run output / logs
+*.log

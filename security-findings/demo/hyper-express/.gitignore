@@ -1,0 +1,15 @@
+# node deps + lockfile
+node_modules/
+package-lock.json
+
+# Go binaries
+vuln_proxy
+strict_proxy
+attacker
+victim
+
+# runtime artifacts
+*.log
+.bpid
+.ppid
+.spid

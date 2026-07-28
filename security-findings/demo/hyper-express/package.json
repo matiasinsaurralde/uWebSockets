@@ -1,0 +1,17 @@
+{
+  "name": "hyper-express-smuggling-poc",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end HTTP request-smuggling PoC against a real hyper-express back-end (hyper-express -> uWebSockets.js v20.69.0).",
+  "main": "backend_hyperexpress.js",
+  "scripts": {
+    "backend": "node backend_hyperexpress.js"
+  },
+  "comments": {
+    "hyper-express": "7.0.2 (latest at time of capture, 2026-07-28)",
+    "resolved-uWebSockets.js": "20.69.0  (hyper-express pins github:uNetworking/uWebSockets.js#v20.69.0; source_commit faf115275bb9c55edf739a06406849e42e89ec04; native addon ABI node-127 -> uws_linux_x64_127.node)"
+  },
+  "dependencies": {
+    "hyper-express": "7.0.2"
+  }
+}
