@@ -85,9 +85,31 @@ them — the risk is deployments that pool connections **without** normalizing. 
 
 | Script | What it does |
 |--------|--------------|
-| `smuggle_probe.go` | the probe above — given a URL, reports A/B/C |
+| `smuggle_probe.go` | the probe above — given an http/https URL, reports A/B/C |
+| `smuggle_probe_tls.go` | HTTPS variant with **TLS diagnostics** (prints negotiated TLS version + ALPN, forces ALPN `http/1.1`, warns on `h2`). Use when a TLS endpoint reads "not vulnerable". `go run smuggle_probe_tls.go [-sni name] [-alpn http/1.1] [-verify] <https-url\|host:port>` |
 | `validate_c_impact.py` | proves scenario **C** is a scoped connection desync, **not** a crash or server-wide DoS (case-C payload + aggressive over-read + post-attack liveness). `python3 validate_c_impact.py [host] [port]` |
 | `nginx_mitigation_test.sh` | runs **real nginx** (with back-end pooling on) in front of the uWS back-end and drives A/B/C through it — shows a compliant L7 proxy blocks all three. `./nginx_mitigation_test.sh` |
+
+## Testing over TLS / HTTPS
+
+`smuggle_probe.go` already supports `https://` (with `-k`). If an HTTPS endpoint keeps reading
+**"not vulnerable"**, it's almost always one of these — and `smuggle_probe_tls.go` prints the TLS
+details that tell them apart:
+
+1. **A TLS-terminating proxy that normalizes HTTP is in front of uWS** (nginx, HAProxy, a cloud
+   load balancer, Cloudflare, an ingress). It rejects/normalizes the malformed requests at the edge,
+   so `/steal` never reaches uWS — **genuinely not vulnerable through that front door.** This is the
+   compliant-proxy mitigation, not a probe failure. To confirm uWS itself is affected, probe the
+   **uWS back-end directly** (behind the proxy) or a `uWS::SSLApp`.
+2. **The endpoint negotiated HTTP/2** (ALPN `h2`). An HTTP/1.1 probe can't express the smuggling
+   framing over h2, so it reads safe. `smuggle_probe_tls.go` forces ALPN `http/1.1` and **warns
+   loudly** if the server still selects `h2`.
+
+**Verified:** against a **uWS.js `SSLApp`** (uWS terminating TLS itself, HTTP/1.1 over TLS),
+`smuggle_probe_tls.go` reports `A=VULNERABLE B=VULNERABLE C=VULNERABLE` — the same as plaintext,
+because the identical C++ `HttpParser` runs. Against an **nginx TLS-terminator** in front of the same
+uWS, it reports `safe` on all three (`400` at the edge). Reproduce both with
+[`../demo/uwebsockets-js/run_tls.sh`](../demo/uwebsockets-js/run_tls.sh).
 
 The methodology, full results, and the disclosure/severity reasoning are written up in detail in
 [`../TESTING-AND-ANALYSIS.md`](../TESTING-AND-ANALYSIS.md).

@@ -171,6 +171,32 @@ fork) returns `A=VULNERABLE` only.
 condition. Cross-user theft *additionally* needs a front-end that (a) **pools** back-end connections
 across clients and (b) **forwards without normalizing** — an L4 LB or lenient gateway, not nginx/envoy.
 
+### 3.1 Testing over TLS / HTTPS
+
+`smuggle_probe.go` already speaks `https://` (via `-k`). [`tools/smuggle_probe_tls.go`](./tools/smuggle_probe_tls.go)
+is an HTTPS variant that additionally **prints the TLS parameters it negotiated** (version, cipher,
+ALPN, peer cert), **forces ALPN `http/1.1`**, and **warns on `h2`** — because an HTTPS endpoint that
+reads "not vulnerable" is almost always a *layer* problem, not a real one:
+
+- **A TLS-terminating proxy that normalizes HTTP** (nginx, HAProxy, cloud LB, Cloudflare, ingress)
+  sits in front and rejects/normalizes the malformed requests → genuinely not vulnerable *through
+  that front door* (the §2 mitigation). Probe the uWS back-end directly to see the deviation.
+- **The endpoint negotiated HTTP/2** (ALPN `h2`): an HTTP/1.1 probe can't express the framing → false
+  negative. The TLS probe forces `http/1.1` and warns if the server still picks `h2`.
+
+**Verified firsthand** (via [`demo/uwebsockets-js/run_tls.sh`](./demo/uwebsockets-js/run_tls.sh),
+which starts a **uWS.js `SSLApp`** — uWS terminating TLS itself — with a self-signed cert):
+
+| TLS target | negotiated | A | B | C |
+|---|---|---|---|---|
+| **uWS.js `SSLApp`** (uWS does TLS) | TLS 1.3, ALPN `""` (HTTP/1.1) | VULNERABLE | VULNERABLE | VULNERABLE |
+| **nginx TLS-terminator** → plaintext uWS | TLS 1.3, ALPN `http/1.1` | safe (`400`) | safe (`400`) | safe (`400`) |
+
+When uWS terminates TLS the **same C++ `HttpParser`** runs, so A/B/C are present over HTTPS exactly as
+over plaintext. When a normalizing proxy terminates TLS, it closes them at the edge (`/steal` reached
+the back-end **0** times). That contrast is the likely explanation for a "not vulnerable over TLS"
+reading: you're probing the terminator, not uWS.
+
 ---
 
 ## 4. Provenance, disclosure & severity reasoning
