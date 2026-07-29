@@ -92,6 +92,9 @@ func main() {
 	}
 	pipelines := countResponses(bResp) >= 2
 	fmt.Printf("[baseline] reachable: %q ; keep-alive/pipelining: %v\n", firstLine(bResp), yn(pipelines))
+	if s, u := respHeader(bResp, "server"), respHeader(bResp, "uwebsockets"); s != "" || u != "" {
+		fmt.Printf("[identity] Server=%q uWebSockets=%q  (a 'Server: nginx/cloudflare/…' banner ⇒ a proxy/CDN answers; a 'uWebSockets' header ⇒ uWS itself)\n", s, u)
+	}
 	if !pipelines {
 		fmt.Printf("           (server closes per request — A/B use connection reuse, so results there are best-effort)\n")
 	}
@@ -190,21 +193,24 @@ func caseC(t *url.URL, host, path string) result {
 	}
 	valid, g, G, z := probe("10"), probe("g"), probe("G"), probe("z")
 	ev := fmt.Sprintf("'10'->%s, 'g'->%s, 'G'->%s, 'z'->%s", sc(valid), sc(g), sc(G), sc(z))
-	accepted := func(s int) bool { return s >= 200 && s < 300 }
-	rejected := func(s int) bool { return s >= 400 && s < 500 }
+	// A chunk-size PARSE rejection is a 400. Any other real status (200, 404, 405, …) means the
+	// chunk framing was accepted and the request reached routing. Compare 'g'/'G' to the valid '10'
+	// control (routed) vs the invalid 'z' control (400) — this works even when the probed path
+	// returns 404, where a naive "is it 2xx?" check would be inconclusive.
+	routed := func(s int) bool { return s >= 200 && s < 600 && s != 400 }
 	switch {
-	case !accepted(valid):
+	case !routed(valid):
 		return report("C", "chunk-size accepts 'g'/'G' as 16 (F1)", "inconclusive", false,
-			ev+" — valid chunked ('10') was not accepted; server may not support chunked bodies here")
-	case !rejected(z):
+			ev+" — valid chunked ('10') was not parsed/routed (got 400/none); can't test chunked here")
+	case z != 400:
 		return report("C", "chunk-size accepts 'g'/'G' as 16 (F1)", "inconclusive", false,
-			ev+" — control 'z' was not rejected; server does not validate chunk sizes (can't isolate the 'g' bug)")
-	case accepted(g) || accepted(G):
+			ev+" — control 'z' was not rejected with 400; server does not validate chunk sizes (can't isolate 'g')")
+	case routed(g) || routed(G):
 		return report("C", "chunk-size accepts 'g'/'G' as 16 (F1)", "VULNERABLE", true,
-			ev+" — 'g'/'G' accepted like the valid '10' while 'z' is rejected: the off-by-one is live")
+			ev+" — 'g'/'G' parsed/routed like the valid '10' while 'z' is rejected(400): the off-by-one is live")
 	default:
 		return report("C", "chunk-size accepts 'g'/'G' as 16 (F1)", "safe/hardened", false,
-			ev+" — 'g'/'G' rejected like 'z': the chunk-size parser is strict")
+			ev+" — 'g'/'G' rejected(400) like 'z' while '10' routed: the chunk-size parser is strict")
 	}
 }
 
@@ -324,6 +330,15 @@ func atoiSafe(s string) int {
 		return 0
 	}
 	return n
+}
+
+// respHeader returns the value of the named header from the FIRST response block.
+func respHeader(data []byte, lowerName string) string {
+	he := bytes.Index(data, []byte("\r\n\r\n"))
+	if he < 0 {
+		he = len(data)
+	}
+	return headerValue(strings.ToLower(string(data[:he])), lowerName)
 }
 
 func firstLine(data []byte) string {

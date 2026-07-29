@@ -33,6 +33,22 @@ exact bytes we need to send).
   `z` — on fresh connections and compares which are accepted vs rejected. `g`/`G` accepted *like* the
   valid `10` while `z` is rejected ⇒ the off-by-one is live.
 
+## Choosing a target path
+
+The URL's **path is used verbatim** in every probe request, and it matters:
+
+- **A/B/C are HTTP-parser deviations that happen *before* routing**, so any path that reaches uWS and
+  returns a normal HTTP response exercises them — a REST route, `/health`, even a 404 path (the C
+  check treats any non-`400` response as "parsed & routed", so a 404 control is fine).
+- **Pick a path your front-end forwards to the uWS back-end.** If different paths route to different
+  backends, target one you know reaches uWS.
+- **Do *not* target a WebSocket-only route** (`app.ws('/ws', …)`). These probes send `POST`/chunked
+  HTTP requests, not WS `Upgrade` handshakes; a ws-only route may answer oddly or not at all (it waits
+  for an upgrade), which can produce a **false negative** for A/B. Use a normal HTTP route. (The parser
+  deviation still occurs — parsing precedes routing — but the response won't be cleanly countable.)
+- Read the **`[identity]`** line the tool prints: a `uWebSockets` header ⇒ you're hitting uWS itself;
+  a `Server: nginx/cloudflare/…` banner ⇒ a proxy/CDN is answering (and probably normalizing).
+
 ## Interpreting the result
 
 - `VULNERABLE` — the back-end parser exhibits the deviation.
